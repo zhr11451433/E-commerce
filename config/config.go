@@ -13,6 +13,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	RedisAddr  string
+	JWTSecret  string
 }
 
 func Load() (*Config, error) {
@@ -27,6 +28,7 @@ func Load() (*Config, error) {
 		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "test"),
 		RedisAddr:  getEnv("REDIS_ADDR", "localhost:6379"),
+		JWTSecret:  getEnv("JWT_SECRET", "your-secret-key"),
 	}, nil
 }
 

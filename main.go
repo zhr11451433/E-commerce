@@ -3,11 +3,9 @@ package main
 import (
 	"ec/config"
 	"ec/database"
+	"ec/router"
 	"fmt"
 	"log"
-	"net/http"
-	
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -26,11 +24,10 @@ func main() {
 	}
 	fmt.Println("连接Redis成功")
 	defer rdb.Close()
-	r := gin.Default()
-	r.GET("/health", healthHandle)
+	err = database.AutoMigrate(db)
+	if err != nil {
+		log.Fatal("数据库迁移失败: ", err)
+	}
+	r := router.NewRouter()
 	_ = r.Run(":8080")
-}
-
-func healthHandle(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
