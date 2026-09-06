@@ -3,6 +3,7 @@ package main
 import (
 	"ec/config"
 	"ec/database"
+	"ec/handler"
 	"ec/router"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ func main() {
 		log.Fatalf("连接 MySQL 失败: %v", err)
 	}
 	fmt.Println("连接MySQL成功")
+	uh := handler.NewUserHandler(db, cfg)
 	rdb, err := database.LinkRedis(cfg)
 	if err != nil {
 		log.Fatalf("连接 Redis 失败: %v", err)
@@ -29,5 +31,10 @@ func main() {
 		log.Fatal("数据库迁移失败: ", err)
 	}
 	r := router.NewRouter()
-	_ = r.Run(":8080")
+	r.GET("/health", handler.HealthHandle)
+	r.POST("/register", uh.Register)
+	r.POST("/login", uh.Login)
+	if err = r.Run(":8080"); err != nil {
+		log.Fatal("服务启动失败", err)
+	}
 }
