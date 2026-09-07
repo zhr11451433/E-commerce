@@ -1,22 +1,17 @@
 package handler
 
 import (
+	"ec/auth"
 	"ec/config"
 	"ec/database"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
-
-type UserHandler struct {
-	db        *gorm.DB
-	JWTSecret string
-}
 
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
@@ -27,11 +22,10 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 	Email    string `json:"email" binding:"required,email"`
 }
-type Claims struct {
-	UserID uint   `json:"user_id"`
-	Role   string `json:"role"`
-	Email  string `json:"email"`
-	jwt.RegisteredClaims
+
+type UserHandler struct {
+	db        *gorm.DB
+	JWTSecret string
 }
 
 func NewUserHandler(db *gorm.DB, cfg *config.Config) *UserHandler {
@@ -40,7 +34,6 @@ func NewUserHandler(db *gorm.DB, cfg *config.Config) *UserHandler {
 		JWTSecret: cfg.JWTSecret,
 	}
 }
-
 func (u *UserHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -53,7 +46,7 @@ func (u *UserHandler) Register(c *gin.Context) {
 		// 查到记录，邮箱已存在
 		c.JSON(http.StatusConflict, gin.H{"error": "邮箱已注册"})
 		return
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) { //没有找到记录
 		// “数据库错误”
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库查询失败"})
 		return
@@ -98,7 +91,7 @@ func (u *UserHandler) Login(c *gin.Context) {
 			return
 		}
 		//密码正确，签发token
-		tokenString, err2 := u.Sign(&existingUser)
+		tokenString, err2 := auth.Sign(&existingUser, u.JWTSecret)
 		if err2 != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "token签发失败"})
 			return
@@ -121,28 +114,8 @@ func (u *UserHandler) Login(c *gin.Context) {
 	return
 }
 
-func HealthHandle(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-}
-
-func (u *UserHandler) Sign(existingUser *database.User) (string, error) {
-	// 1. 设置过期时间（类型特殊，用 jwt.NewNumericDate 转）
-	exp := jwt.NewNumericDate(time.Now().Add(24 * time.Hour))
-	// 2. 组装 claims
-	claims := Claims{
-		UserID: existingUser.ID,
-		Role:   existingUser.Role,
-		Email:  existingUser.Email,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: exp,
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	// 3. 创建 token + 签名（HS256 = 对称加密，同一个 secret 既能签也能验）
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(u.JWTSecret))
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
+func Me(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	role, _ := c.Get("role")
+	c.JSON(http.StatusOK, gin.H{"user_id": userID, "role": role})
 }

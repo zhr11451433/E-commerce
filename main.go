@@ -4,6 +4,7 @@ import (
 	"ec/config"
 	"ec/database"
 	"ec/handler"
+	"ec/middleware"
 	"ec/router"
 	"fmt"
 	"log"
@@ -31,7 +32,7 @@ func main() {
 		log.Fatal("数据库迁移失败: ", err)
 	}
 	r := router.NewRouter()
-	r.GET("/health", handler.HealthHandle)
+	r.GET("/me", middleware.Auth(cfg.JWTSecret), middleware.RequireAdmin(), handler.Me)
 	r.POST("/register", uh.Register)
 	r.POST("/login", uh.Login)
 	if err = r.Run(":8080"); err != nil {
