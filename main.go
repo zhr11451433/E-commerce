@@ -3,8 +3,6 @@ package main
 import (
 	"ec/config"
 	"ec/database"
-	"ec/handler"
-	"ec/middleware"
 	"ec/router"
 	"fmt"
 	"log"
@@ -20,7 +18,6 @@ func main() {
 		log.Fatalf("连接 MySQL 失败: %v", err)
 	}
 	fmt.Println("连接MySQL成功")
-	uh := handler.NewUserHandler(db, cfg)
 	rdb, err := database.LinkRedis(cfg)
 	if err != nil {
 		log.Fatalf("连接 Redis 失败: %v", err)
@@ -31,10 +28,7 @@ func main() {
 	if err != nil {
 		log.Fatal("数据库迁移失败: ", err)
 	}
-	r := router.NewRouter()
-	r.GET("/me", middleware.Auth(cfg.JWTSecret), middleware.RequireAdmin(), handler.Me)
-	r.POST("/register", uh.Register)
-	r.POST("/login", uh.Login)
+	r := router.NewRouter(db, cfg)
 	if err = r.Run(":8080"); err != nil {
 		log.Fatal("服务启动失败", err)
 	}

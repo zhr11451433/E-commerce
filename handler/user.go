@@ -104,6 +104,7 @@ func (u *UserHandler) Login(c *gin.Context) {
 				"email": existingUser.Email,
 			},
 		})
+		return
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		// 这个邮箱没注册
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "邮箱或密码错误"})
