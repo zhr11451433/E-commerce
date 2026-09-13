@@ -34,6 +34,7 @@ func NewUserHandler(db *gorm.DB, cfg *config.Config) *UserHandler {
 		JWTSecret: cfg.JWTSecret,
 	}
 }
+
 func (u *UserHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

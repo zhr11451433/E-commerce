@@ -1,31 +1,51 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"ec/database"
 )
 
 type CategoryHandler struct {
-	db *gorm.DB
+	db  *gorm.DB
+	rdb *redis.Client
 }
 
 type CategoryRequest struct {
 	Name string `binding:"required" json:"name"`
 }
 
-func NewCategoryHandler(db *gorm.DB) *CategoryHandler {
-	return &CategoryHandler{db: db}
+func NewCategoryHandler(db *gorm.DB, rdb *redis.Client) *CategoryHandler {
+	return &CategoryHandler{db: db, rdb: rdb}
 }
 
 func (u *CategoryHandler) List(c *gin.Context) {
 	var res []database.Category
+	key := "categories"
+	ctx := c.Request.Context()
+	val, err := u.rdb.Get(ctx, key).Result()
+	if err == nil {
+		//命中缓存
+		if err := json.Unmarshal([]byte(val), &res); err == nil {
+			c.JSON(http.StatusOK, res)
+			return
+		}
+	} else if !errors.Is(err, redis.Nil) {
+
+	}
 	u.db.Model(&database.Category{}).Find(&res)
+	data, err := json.Marshal(&res)
+	if err == nil {
+		u.rdb.Set(ctx, key, data, 10*time.Minute)
+	}
 	c.JSON(http.StatusOK, res)
 }
 
@@ -49,6 +69,7 @@ func (u *CategoryHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
+	invalidateCategoryCache(u.rdb, c.Request.Context())
 	c.JSON(http.StatusCreated, gin.H{
 		"status":   "创建成功",
 		"category": res,
@@ -75,6 +96,7 @@ func (u *CategoryHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
 			return
 		}
+		invalidateCategoryAndProductCache(u.rdb, c.Request.Context())
 		c.JSON(http.StatusOK, gin.H{"status": "更新成功"})
 		return
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) { //数据库错误
@@ -99,6 +121,7 @@ func (u *CategoryHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, result.Error.Error())
 		return
 	} else if result.Error == nil && result.RowsAffected > 0 {
+		invalidateCategoryAndProductCache(u.rdb, c.Request.Context())
 		c.JSON(http.StatusOK, gin.H{"status": "删除成功"})
 		return
 	} else if result.RowsAffected == 0 {

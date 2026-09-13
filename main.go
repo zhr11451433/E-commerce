@@ -28,7 +28,7 @@ func main() {
 	if err != nil {
 		log.Fatal("数据库迁移失败: ", err)
 	}
-	r := router.NewRouter(db, cfg)
+	r := router.NewRouter(db, cfg, rdb)
 	if err = r.Run(":8080"); err != nil {
 		log.Fatal("服务启动失败", err)
 	}

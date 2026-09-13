@@ -21,48 +21,65 @@ func NewCartHandler(db *gorm.DB) *CartHandler {
 type cartItemRequest struct {
 	Quantity int `json:"quantity" binding:"required,min=1"`
 }
+
 type addCartItem struct {
 	ProductId int `json:"product_id" binding:"required,min=1"`
 	Quantity  int `json:"quantity" binding:"required,min=1"`
 }
 
-//看我的购物车
-
-func (u *CartHandler) GetCart(c *gin.Context) {
+// 辅助函数：获取当前用户 ID（失败时已写好响应，调用方只需判断 ok 并 return）
+func getCurrentUserID(c *gin.Context) (uint, bool) {
 	userId, ok := c.Get("user_id")
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该用户不存在"})
-		return
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return 0, false
 	}
-	id, ok := userId.(uint)
+	uid, ok := userId.(uint)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "类型错误"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "用户信息错误"})
+		return 0, false
+	}
+	return uid, true
+}
+
+// 辅助函数：获取当前用户的购物车（失败时已写好响应）
+func (u *CartHandler) getUserCart(c *gin.Context, uid uint) (*database.Cart, bool) {
+	var cart database.Cart
+	if err := u.db.Where("user_id = ?", uid).First(&cart).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "购物车不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
+		}
+		return nil, false
+	}
+	return &cart, true
+}
+
+// 看我的购物车
+
+func (u *CartHandler) GetCart(c *gin.Context) {
+	uid, ok := getCurrentUserID(c)
+	if !ok {
 		return
 	}
-	var resCart database.Cart
-	if err := u.db.Where("user_id = ?", id).First(&resCart).Error; err != nil {
-		c.JSON(http.StatusOK, "")
+	cart, ok := u.getUserCart(c, uid)
+	if !ok {
 		return
 	}
-	var resCartItem []database.CartItem
-	u.db.Preload("Product").Where("cart_id = ?", resCart.ID).Find(&resCartItem)
+	var items []database.CartItem
+	u.db.Preload("Product").Where("cart_id = ?", cart.ID).Find(&items)
 	c.JSON(http.StatusOK, gin.H{
-		"cart_id": resCart.ID,
-		"items":   resCartItem,
+		"cart_id": cart.ID,
+		"items":   items,
 	})
 }
 
-//加商品 {product_id, quantity}
+// 加商品 {product_id, quantity}
 
 func (u *CartHandler) AddItem(c *gin.Context) {
-	userId, ok := c.Get("user_id")
+	uid, ok := getCurrentUserID(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该用户不存在"})
-		return
-	}
-	id, ok := userId.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "类型错误"})
 		return
 	}
 	var req addCartItem
@@ -70,131 +87,124 @@ func (u *CartHandler) AddItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	var existingProduct database.Product
-	if err := u.db.Where("id = ?", req.ProductId).First(&existingProduct).Error; err == nil {
-		// 4. 找或建购物车 关键点 1
-		var existingCart database.Cart
-		u.db.FirstOrCreate(&existingCart, database.Cart{UserId: id})
-		// 5. 判断商品是否已在购物车中（关键点 2
-		var item database.CartItem
-		if err := u.db.Where("cart_id = ? and product_id = ?", existingCart.ID, req.ProductId).First(&item).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-			item = database.CartItem{
-				CartId:    existingCart.ID,
-				ProductId: uint(req.ProductId),
-				Quantity:  req.Quantity,
-			}
-			if err := u.db.Create(&item).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "添加失败"})
-				return
-			}
-			c.JSON(http.StatusCreated, item)
-			return
-		} else if err == nil {
-			// 已在购物车 → 数量累加
-			item.Quantity += req.Quantity
-			if err := u.db.Save(&item).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "更新数量失败"})
-				return
-			}
-			c.JSON(http.StatusOK, item)
-			return
+
+	var product database.Product
+	if err := u.db.Where("id = ?", req.ProductId).First(&product).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "没找到该产品"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
 		}
+		return
+	}
+
+	// 找或建购物车
+	var cart database.Cart
+	if err := u.db.FirstOrCreate(&cart, database.Cart{UserId: uid}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
 		return
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "没找到该产品"})
+	}
+
+	// 判断商品是否已在购物车
+	var item database.CartItem
+	err := u.db.Where("cart_id = ? AND product_id = ?", cart.ID, req.ProductId).First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		item = database.CartItem{
+			CartId:    cart.ID,
+			ProductId: uint(req.ProductId),
+			Quantity:  req.Quantity,
+		}
+		if err := u.db.Create(&item).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "添加失败"})
+			return
+		}
+		c.JSON(http.StatusCreated, item)
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
+		return
+	}
+
+	// 已在购物车 → 数量累加
+	item.Quantity += req.Quantity
+	if err := u.db.Save(&item).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新数量失败"})
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
-//改数量 {quantity}
+// 改数量 {quantity}
 
 func (u *CartHandler) UpdateCart(c *gin.Context) {
-	userId, ok := c.Get("user_id")
+	uid, ok := getCurrentUserID(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该用户不存在"})
 		return
 	}
-	uid, ok := userId.(uint)
+	cart, ok := u.getUserCart(c, uid)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "类型错误"})
 		return
 	}
+
 	idStr := c.Param("id")
-	//购物车商品的id
 	cartItemID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id错误"})
 		return
 	}
+
 	var req cartItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	var existingCart database.Cart
-	if err := u.db.Where("user_id = ?", uid).First(&existingCart).Error; err == nil {
-		var existingCartItem database.CartItem
-		if err := u.db.Where("id = ? and cart_id = ?", cartItemID, existingCart.ID).First(&existingCartItem).Error; err == nil {
-			existingCartItem.Quantity = req.Quantity
-			if err := u.db.Save(&existingCartItem).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
-				return
-			}
-			c.JSON(http.StatusOK, existingCartItem)
-			return
-		} else if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "没找到该产品"})
-			return
+
+	var item database.CartItem
+	if err := u.db.Where("id = ? AND cart_id = ?", cartItemID, cart.ID).First(&item).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "购物车项不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
-		return
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "没找到该产品"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
-	return
+
+	item.Quantity = req.Quantity
+	if err := u.db.Save(&item).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
-//移除
+// 移除
 
 func (u *CartHandler) DeleteCart(c *gin.Context) {
-	userId, ok := c.Get("user_id")
+	uid, ok := getCurrentUserID(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该用户不存在"})
 		return
 	}
-	uid, ok := userId.(uint)
+	cart, ok := u.getUserCart(c, uid)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "类型错误"})
 		return
 	}
+
 	idStr := c.Param("id")
 	cartItemID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id错误"})
 		return
 	}
-	var existingCart database.Cart
-	if err := u.db.Where("user_id = ?", uid).First(&existingCart).Error; err == nil {
-		result := u.db.Where("id = ? and cart_id = ?", cartItemID, existingCart.ID).Delete(&database.CartItem{})
-		if result.Error != nil {
-			//表不存在或其他错误
-			c.JSON(http.StatusInternalServerError, result.Error.Error())
-			return
-		} else if result.Error == nil && result.RowsAffected > 0 {
-			c.JSON(http.StatusOK, gin.H{"status": "删除成功"})
-			return
-		} else if result.RowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "商品不存在"})
-			return
-		}
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "没找到该产品"})
+
+	result := u.db.Where("id = ? AND cart_id = ?", cartItemID, cart.ID).Delete(&database.CartItem{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
-	return
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "购物车项不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "删除成功"})
 }

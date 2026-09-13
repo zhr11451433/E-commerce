@@ -6,17 +6,19 @@ import (
 	"ec/middleware"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
+func NewRouter(db *gorm.DB, cfg *config.Config, rdb *redis.Client) *gin.Engine {
 	r := gin.Default()
 	userHandler := handler.NewUserHandler(db, cfg)
-	categoryHandler := handler.NewCategoryHandler(db)
-	productHandler := handler.NewProductHandler(db)
+	categoryHandler := handler.NewCategoryHandler(db, rdb)
+	productHandler := handler.NewProductHandler(db, rdb)
 	cartHandler := handler.NewCartHandler(db)
-	adminMiddleware := middleware.RequireAdmin()
-	authMiddleware := middleware.Auth(userHandler.JWTSecret)
+	orderHandler := handler.NewOrderHandler(db, rdb)
+	adminMiddleware := middleware.RequireAdmin()             //验证
+	authMiddleware := middleware.Auth(userHandler.JWTSecret) //门卫
 	r.GET("/me", authMiddleware, handler.Me)
 	r.POST("/register", userHandler.Register)
 	r.POST("/login", userHandler.Login)
@@ -35,12 +37,19 @@ func NewRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 		product.PUT("/:id", authMiddleware, adminMiddleware, productHandler.Update)
 		product.DELETE("/:id", authMiddleware, adminMiddleware, productHandler.Delete)
 	}
-	cart := r.Group("/cart")
+	cart := r.Group("/cart", authMiddleware)
 	{
-		cart.GET("", authMiddleware, cartHandler.GetCart)
-		cart.POST("/items", authMiddleware, cartHandler.AddItem)
-		cart.PUT("/items/:id", authMiddleware, cartHandler.UpdateCart)
-		cart.DELETE("/items/:id", authMiddleware, cartHandler.DeleteCart)
+		cart.GET("", cartHandler.GetCart)
+		cart.POST("/items", cartHandler.AddItem)
+		cart.PUT("/items/:id", cartHandler.UpdateCart)
+		cart.DELETE("/items/:id", cartHandler.DeleteCart)
+	}
+	order := r.Group("/orders", authMiddleware)
+	{
+		order.POST("", orderHandler.Checkout)
+		order.GET("", orderHandler.List)
+		order.GET("/:id", orderHandler.ListId)
+		order.PUT("/:id", adminMiddleware, orderHandler.Update)
 	}
 	return r
 }

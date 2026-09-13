@@ -38,16 +38,18 @@ type Category struct {
 
 type Cart struct {
 	gorm.Model
-	UserId uint `gorm:"uniqueIndex"`
-	User   User `gorm:"foreignKey:UserId"`
+	UserId    uint       `gorm:"uniqueIndex"`
+	User      User       `gorm:"foreignKey:UserId"`
+	CartItems []CartItem `gorm:"foreignKey:CartId"`
 }
 
 type Order struct {
 	gorm.Model
-	Status int             // 订单状态，用常量表示
-	Total  decimal.Decimal `gorm:"type:decimal(10,2)"`
-	UserId uint            `gorm:"index"`
-	User   User            `gorm:"foreignKey:UserId"`
+	Status     int             // 订单状态，用常量表示
+	Total      decimal.Decimal `gorm:"type:decimal(10,2)"`
+	UserId     uint            `gorm:"index"`
+	User       User            `gorm:"foreignKey:UserId"`
+	OrderItems []OrderItem     `gorm:"foreignKey:OrderId"`
 }
 
 type OrderItem struct {
@@ -57,7 +59,7 @@ type OrderItem struct {
 	Price     decimal.Decimal `gorm:"type:decimal(10,2)"`
 	Quantity  int
 	OrderId   uint
-	Order     Order `gorm:"foreignKey:OrderId"`
+	//Order     Order `gorm:"foreignKey:OrderId"`
 }
 
 type CartItem struct {
