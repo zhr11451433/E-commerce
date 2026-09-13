@@ -1,5 +1,5 @@
 # E-Commerce API
-
+https://roadmap.sh/projects/ecommerce-api
 一个基于 Go + Gin + GORM + MySQL + Redis 的电商后端 API，完整实现了用户认证、角色鉴权、分类/商品管理、购物车、下单结账（事务）、订单管理、Redis 缓存等功能。
 
 ## 技术栈
